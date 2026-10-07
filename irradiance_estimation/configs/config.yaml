@@ -1,0 +1,39 @@
+training:
+    epochs: 16
+    optimizer: "adamw"
+    random_seed: 0
+    learning_rate: 9e-4
+    weight_decay: 5e-4
+    momentum: 0.9
+    lr_scheduler: "cos_anneal"
+    accelerator: "gpu"
+    target: "kt"
+    
+dataset:
+    batch_size: 64
+    image_size: 128
+    timedelta: 0
+    mask_radius: 0
+    use_hflip: True
+    use_crop: True
+    use_normalization: True
+    hdf5_path: "solar_forecasting/datasets/SIRTA_dataset/data/imgs_128.h5"
+
+model:
+    backbone_pretrained_weights: "DEFAULT"
+    backbone: "ResNet50"
+    estimate_uncertainty: False
+    dhi_dni_estimation: False
+    uncertainty:
+        type: "continuous_gaussian" #none, continuous_gaussian, histloss_gauss, histloss_onebin, histloss_uniform
+        nbins: 100 # for histogram uncertainty
+        sigma_ratio: 2 # for histloss_gauss
+        pad_ratio: 3 # for histloss_gauss
+        nbins_pad: 10 # for histloss_onebin, histloss_uniform
+        eps: 1e-3 # for histloss_uniform
+
+experiment:
+    project: "irradiance_estimation"
+    name: "backbone*_continuous_gaussian_train_var_only"
+    group_name: "uncertainty_estimation"
+    job_type: "backbone*_trainable^_var^_only"
