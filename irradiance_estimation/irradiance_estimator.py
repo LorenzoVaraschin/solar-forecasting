@@ -29,7 +29,10 @@ class IrradianceEstimator(L.LightningModule):
         if config.model.backbone not in backbones_dict.keys():
             raise ValueError(f"Invalid model backbone '{config.model.backbone}'. Must be one of {list(backbones_dict.keys())}")       
         self.backbone = backbones_dict[config.model.backbone](config)
-
+        
+        if config.model.uncertainty.head_only.flag == True:
+            self._load_and_freeze_weights(layer_="backbone")
+        
         #================= create irradiance heads =================
         num_outs = 1
         if config.model.uncertainty.type == "continuous_gaussian":
@@ -38,7 +41,11 @@ class IrradianceEstimator(L.LightningModule):
             num_outs = config.model.uncertainty.nbins
             self._init_histloss_params()
 
-        self.irr_head = nn.Linear(in_features=self.backbone._get_final_layer_shape(), out_features=num_outs)
+        if (config.model.uncertainty.type == "continuous_gaussian") and (config.model.uncertainty.head_only.flag == True):
+            self.irr_head = backbones.ParallelLinearHead(in_feat=self.backbone._get_final_layer_shape())
+            self._load_and_freeze_weights(layer_="head")
+        else:
+            self.irr_head = nn.Linear(in_features=self.backbone._get_final_layer_shape(), out_features=num_outs)
             
         #================= create model metrics =================
         self.train_metrics = nn.ModuleDict()
@@ -183,7 +190,7 @@ class IrradianceEstimator(L.LightningModule):
         elif lr_scheduler == "cos_anneal":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=total_steps, eta_min=learning_rate/10)
         elif lr_scheduler == "constant":
-            scheduler = None
+            return {"optimizer": optimizer}
 
         return {
             "optimizer": optimizer,
@@ -366,3 +373,47 @@ class IrradianceEstimator(L.LightningModule):
         elif (split_name == "validation") and (self.trainer.current_epoch == self.trainer.max_epochs - 1):
             self.all_val_preds.extend(irr_preds.cpu().numpy().tolist())
             self.all_val_trues.extend(irr_target.cpu().numpy().tolist())
+
+    def _load_and_freeze_weights(self, layer_):
+        """
+        Load pretrained weights of the desired layer, if available, and freeze them. This is used when training a seperate head to predict the uncertainty. The user should make sure to check if the preprocessing/hyperparemters of the saved checkpoints are consistent with the current model.
+        """
+        
+        assert self.config.model.uncertainty.head_only.flag == True, "Backbone weights should only be loaded and frozen when training the uncertainty head separately"
+        
+        # Get model backbone checkpoint path
+        pretrained_ckpt_path = os.path.join(os.getcwd(), self.config.model.uncertainty.head_only.pretrained_ckpt_path)
+        
+        # Sanity check prints
+        print("\n\n")
+        print(f"LOADING THE CHECKPOINT FROM THE FOLLOWING MODEL {os.path.basename(pretrained_ckpt_path)}")
+        print(f"CURRENT UNCERTAINTY IS SET TO {self.config.model.uncertainty.type}")
+        print("\n\n")
+
+        if os.path.exists(pretrained_ckpt_path):
+            model_state_dict = torch.load(pretrained_ckpt_path, map_location=self.device)["state_dict"]
+
+            # Load only the backbone weights, head will be trained from scratch. If using gaussian NLL loss, also freeze the part of the head that computes the mean (layer_=="head")
+            if layer_ == "backbone":
+                backbone_weights = {
+                    k.removeprefix("backbone."): v
+                    for k, v in model_state_dict.items()
+                    if k.startswith("backbone")
+                }
+                self.backbone.load_state_dict(backbone_weights)
+                for param_ in self.backbone.parameters():
+                    param_.requires_grad = False
+                self.backbone.eval()
+            elif layer_ == "head":
+                # Load only mean head state dict when training with guassian NLL
+                head_weights = {
+                    k.replace("irr_head.", "mean_head."): v[[0]]
+                    for k, v in model_state_dict.items()
+                    if k.startswith("irr_head")
+                }
+                self.irr_head.load_state_dict(head_weights, strict=False)
+                for name_, param_ in self.irr_head.named_parameters():
+                    if "mean_head" in name_:
+                        param_.requires_grad = False
+        else:
+            raise RuntimeError(f"Unable to find checkpoints path {pretrained_ckpt_path}")

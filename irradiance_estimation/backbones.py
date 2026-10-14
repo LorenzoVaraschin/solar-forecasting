@@ -1,5 +1,6 @@
 import torchvision
 from torch import nn
+import torch
 
 class ResNet50(nn.Module):
     def __init__(self, config):
@@ -37,3 +38,17 @@ class ConvNextSmall(nn.Module):
     def forward(self, x):
         x = self.convnext(x)
         return x
+
+class ParallelLinearHead(nn.Module):
+    """
+    Parallel head used when freezing the mean head, but not freezing the var head of guassian NLL experiment.
+    """
+    def __init__(self, in_feat):
+        super().__init__()
+        self.mean_head = nn.Linear(in_features=in_feat, out_features=1)
+        self.var_head = nn.Linear(in_features=in_feat, out_features=1)
+        
+    def forward(self, x):
+        x_mean = self.mean_head(x)
+        x_var = self.var_head(x)
+        return torch.cat((x_mean, x_var), dim=-1)

@@ -2,10 +2,10 @@ training:
     epochs: 16
     optimizer: "adamw"
     random_seed: 0
-    learning_rate: 9e-4
+    learning_rate: 9e-5
     weight_decay: 5e-4
     momentum: 0.9
-    lr_scheduler: "cos_anneal"
+    lr_scheduler: "constant"
     accelerator: "gpu"
     target: "kt"
     
@@ -31,9 +31,12 @@ model:
         pad_ratio: 3 # for histloss_gauss
         nbins_pad: 10 # for histloss_onebin, histloss_uniform
         eps: 1e-3 # for histloss_uniform
+        head_only: 
+            flag: True
+            pretrained_ckpt_path: "model_checkpoints/uncertainty_estimation/continuous_gaussian/continuous_gaussian.ckpt"
 
 experiment:
     project: "irradiance_estimation"
-    name: "backbone*_continuous_gaussian_train_var_only"
+    name: "var_only_continuous_gaussian_constlr9e-5"
     group_name: "uncertainty_estimation"
-    job_type: "backbone*_trainable^_var^_only"
+    job_type: "var_only_training"
