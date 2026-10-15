@@ -69,6 +69,8 @@ class IrradianceEstimator(L.LightningModule):
             self.criterion = torch.nn.CrossEntropyLoss()
         elif config.model.uncertainty.type == "none":
             self.criterion = torch.nn.MSELoss()
+        elif config.model.uncertainty.type == "l1":
+            self.criterion = torch.nn.L1Loss()
 
         #================= save all val GHI preds and trues to log largest errors samples in the final epoch =================
         self.all_val_preds = list()
@@ -298,7 +300,7 @@ class IrradianceEstimator(L.LightningModule):
     def get_preds(self, outs_, batch):
         total_loss = 0
         
-        if self.uncertainty_type == "none":
+        if self.uncertainty_type in ["none",  "l1"]:
             preds = outs_[:, 0]
             if self.config.training.target == "kt":
                 target = batch[f"ghi_kt_solis"]
