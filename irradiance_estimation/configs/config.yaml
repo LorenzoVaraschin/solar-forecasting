@@ -37,3 +37,4 @@ experiment:
     name: "backbone*_continuous_gaussian_train_var_only"
     group_name: "uncertainty_estimation"
     job_type: "backbone*_trainable^_var^_only"
+    ckpt_monitor: "validation/loss"

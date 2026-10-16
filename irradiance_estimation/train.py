@@ -28,7 +28,7 @@ def main():
             ModelCheckpoint(
                 dirpath=os.path.join(os.getcwd(), "model_checkpoints", config.experiment.group_name, config.experiment.job_type if config.experiment.job_type is not None else ""),
                 filename=config.experiment.name,
-                monitor=None
+                monitor=config.experiment.ckpt_monitor
             )
         ]
         
