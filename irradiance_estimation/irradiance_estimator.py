@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 import math
 import h5py
 import os
+import metrics
 
 class IrradianceEstimator(L.LightningModule):
     def __init__(self, config):
@@ -54,6 +55,16 @@ class IrradianceEstimator(L.LightningModule):
         self.train_metrics["ghi"] = collection.clone(prefix=f"train/ghi_")
         self.val_metrics["ghi"] = collection.clone(prefix=f"val/ghi_")
         self.test_metrics["ghi"] = collection.clone(prefix=f"test/ghi_")
+
+        if (self.config.model.uncertainty.type == "continuous_gaussian") or ("histloss" in self.config.model.uncertainty.type):
+            self.val_metrics["excess@shortage"] = metrics.ExcessAtShortage(
+                thresholds=[0.05],
+                uncertainty_type="gaussian" if self.config.model.uncertainty.type == "continuous_gaussian" else "histogram"
+            )
+            self.test_metrics["excess@shortage"] = metrics.ExcessAtShortage(
+                thresholds=[0.05],
+                uncertainty_type="gaussian" if self.config.model.uncertainty.type == "continuous_gaussian" else "histogram"
+            )
         
         #================= create loss functions =================
         if config.model.uncertainty.type == "continuous_gaussian":
@@ -95,7 +106,25 @@ class IrradianceEstimator(L.LightningModule):
 
         self._log_metrics(split_name="test", metrics_=self.test_metrics, outs_=outs_, batch=batch)
 
+    def on_test_epoch_end(self):
+        # log excess@shortage metric
+        excess_shortage = self.test_metrics["excess@shortage"].compute()
+        self.log("test/up_excess@0.05", excess_shortage["excess_up"].item())
+        self.log("test/down_excess@0.05", excess_shortage["excess_down"].item())
+        self.log("test/up_excess+shortage0.05", excess_shortage["excess+shortage_up"].item())
+        self.log("test/down_excess+shortage0.05", excess_shortage["excess+shortage_down"].item())
+        self.test_metrics["excess@shortage"].reset()
+        
     def on_validation_epoch_end(self):
+        # log excess@shortage metric
+        if self.trainer.current_epoch > 0:
+            excess_shortage = self.val_metrics["excess@shortage"].compute()
+            self.log("val/up_excess@0.05", excess_shortage["excess_up"].item())
+            self.log("val/down_excess@0.05", excess_shortage["excess_down"].item())
+            self.log("val/up_excess+shortage0.05", excess_shortage["excess+shortage_up"].item())
+            self.log("val/down_excess+shortage0.05", excess_shortage["excess+shortage_down"].item())
+            self.val_metrics["excess@shortage"].reset()
+        
         # log images with 10 largest GHI estimation errors
         if self.trainer.current_epoch == self.trainer.max_epochs - 1:
             # convert list to numpy array
@@ -361,6 +390,35 @@ class IrradianceEstimator(L.LightningModule):
         self.log_dict(metrics_["ghi"], on_step=on_step, on_epoch=True, prog_bar=prog_bar, logger=True)
         self.log(f"{split_name}/loss", total_loss.detach(), on_step=on_step, on_epoch=True, prog_bar=prog_bar, logger=True)
 
+        if (split_name in ["validation", "test"]) and (self.trainer.current_epoch > 0):
+            trues = {
+                "ghi": batch["ghi"].cpu(),
+                "kt": batch["ghi_kt_solis"].cpu()
+            }
+            if self.config.model.uncertainty.type == "continuous_gaussian":
+                total_loss, pred_irr, pred_ghi, pred_var = preds_["total_loss"], preds_["target_preds"], preds_["irr_preds"], preds_["target_var"]
+                pred_ghi_var = pred_var * batch["ghi_solis"]**2
+                preds = {
+                    "ghi": pred_ghi.cpu(),
+                    "kt": pred_irr.cpu(),
+                    "ghi_var": pred_ghi_var.cpu(),
+                    "kt_var": pred_var.cpu()
+                }
+            else:
+                total_loss, pred_irr, pred_ghi, hist_probs = preds_["total_loss"], preds_["target_preds"], preds_["irr_preds"], preds_["hist_probs"]
+                cumulative_probs = np.cumsum(torch.cat((torch.zeros((hist_probs.shape[0], 1)), hist_probs.cpu()), dim=-1).numpy(), axis=-1)
+                bin_borders_kt = self.borders.cpu().permute(1, 0).repeat(batch["ghi_solis"].shape[0], 1)
+                bin_borders_ghi = (self.borders.cpu() * batch["ghi_solis"].cpu()).permute(1, 0)
+                preds = {
+                    "ghi": pred_ghi.cpu(),
+                    "kt": pred_irr.cpu(),
+                    "bin_borders_kt": bin_borders_kt.cpu(),
+                    "bin_borders_ghi": bin_borders_ghi.cpu(),
+                    "cumulative_probs": torch.tensor(cumulative_probs).cpu(),
+                    "hist_probs": hist_probs.cpu()
+                }
+            metrics_["excess@shortage"].update(trues, preds)
+          
         if split_name == "train":
             return total_loss
         elif (split_name == "validation") and (self.trainer.current_epoch == self.trainer.max_epochs - 1):

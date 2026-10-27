@@ -25,7 +25,7 @@ model:
     estimate_uncertainty: False
     dhi_dni_estimation: False
     uncertainty:
-        type: "continuous_gaussian" #none, continuous_gaussian, histloss_gauss, histloss_onebin, histloss_uniform
+        type: "histloss_gauss" #none, continuous_gaussian, histloss_gauss, histloss_onebin, histloss_uniform
         nbins: 100 # for histogram uncertainty
         sigma_ratio: 2 # for histloss_gauss
         pad_ratio: 3 # for histloss_gauss
@@ -34,7 +34,7 @@ model:
 
 experiment:
     project: "irradiance_estimation"
-    name: "backbone*_continuous_gaussian_train_var_only"
+    name: "histloss_gaussv2"
     group_name: "uncertainty_estimation"
-    job_type: "backbone*_trainable^_var^_only"
-    ckpt_monitor: "validation/loss"
+    job_type: "testing_excess_metric_log"
+    ckpt_monitor: "val/ghi_rmse"
